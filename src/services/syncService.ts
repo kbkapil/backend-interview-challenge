@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { Task, SyncQueueItem, SyncResult, BatchSyncRequest, BatchSyncResponse } from '../types';
+import { v4 as uuidv4 } from 'uuid';
+import { Task, SyncQueueItem, SyncResult, SyncError, BatchSyncRequest, BatchSyncResponse } from '../types';
 import { Database } from '../db/database';
 import { TaskService } from './taskService';
 
@@ -15,56 +16,186 @@ export class SyncService {
   }
 
   async sync(): Promise<SyncResult> {
-    // TODO: Main sync orchestration method
-    // 1. Get all items from sync queue
-    // 2. Group items by batch (use SYNC_BATCH_SIZE from env)
-    // 3. Process each batch
-    // 4. Handle success/failure for each item
-    // 5. Update sync status in database
-    // 6. Return sync result summary
-    throw new Error('Not implemented');
+    // Check connectivity first
+    if (!(await this.checkConnectivity())) {
+      return {
+        success: false,
+        synced_items: 0,
+        failed_items: 0,
+        errors: [{
+          task_id: 'connectivity',
+          operation: 'connect',
+          error: 'Server is not reachable',
+          timestamp: new Date()
+        }]
+      };
+    }
+
+    // Get all items from sync queue
+    const queueItems = await this.db.all(
+      `SELECT id, task_id, operation, data, created_at, retry_count, error_message
+       FROM sync_queue ORDER BY created_at ASC`
+    ) as SyncQueueItem[];
+
+    if (queueItems.length === 0) {
+      return {
+        success: true,
+        synced_items: 0,
+        failed_items: 0,
+        errors: []
+      };
+    }
+
+    const batchSize = parseInt(process.env.SYNC_BATCH_SIZE || '10');
+    const batches: SyncQueueItem[][] = [];
+
+    // Group items into batches
+    for (let i = 0; i < queueItems.length; i += batchSize) {
+      batches.push(queueItems.slice(i, i + batchSize));
+    }
+
+    let totalSynced = 0;
+    let totalFailed = 0;
+    const allErrors: SyncError[] = [];
+
+    // Process each batch
+    for (const batch of batches) {
+      try {
+        await this.processBatch(batch);
+        totalSynced += batch.length;
+      } catch (error) {
+        totalFailed += batch.length;
+        // Add batch-level errors
+        for (const item of batch) {
+          allErrors.push({
+            task_id: item.task_id,
+            operation: item.operation,
+            error: (error as Error).message,
+            timestamp: new Date()
+          });
+        }
+      }
+    }
+
+    return {
+      success: totalFailed === 0,
+      synced_items: totalSynced,
+      failed_items: totalFailed,
+      errors: allErrors
+    };
   }
 
   async addToSyncQueue(taskId: string, operation: 'create' | 'update' | 'delete', data: Partial<Task>): Promise<void> {
-    // TODO: Add operation to sync queue
-    // 1. Create sync queue item
-    // 2. Store serialized task data
-    // 3. Insert into sync_queue table
-    throw new Error('Not implemented');
+    const id = uuidv4();
+    await this.db.run(
+      `INSERT INTO sync_queue (id, task_id, operation, data, created_at, retry_count)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, taskId, operation, JSON.stringify(data), new Date().toISOString(), 0]
+    );
   }
 
   private async processBatch(items: SyncQueueItem[]): Promise<BatchSyncResponse> {
-    // TODO: Process a batch of sync items
-    // 1. Prepare batch request
-    // 2. Send to server
-    // 3. Handle response
-    // 4. Apply conflict resolution if needed
-    throw new Error('Not implemented');
+    const batchRequest: BatchSyncRequest = {
+      items: items,
+      client_timestamp: new Date()
+    };
+
+    try {
+      const response = await axios.post<BatchSyncResponse>(
+        `${this.apiUrl}/batch`,
+        batchRequest,
+        { timeout: 30000 }
+      );
+
+      // Process each response item
+      for (const result of response.data.processed_items) {
+        const originalItem = items.find(item => item.task_id === result.client_id);
+        if (!originalItem) continue;
+
+        if (result.status === 'success') {
+          // Update local task with server data if provided
+          if (result.resolved_data) {
+            await this.taskService.updateTask(result.client_id, result.resolved_data);
+          }
+          await this.updateSyncStatus(result.client_id, 'synced', { server_id: result.server_id });
+        } else if (result.status === 'conflict') {
+          // Handle conflict resolution
+          const localTask = await this.taskService.getTask(result.client_id);
+          if (localTask && result.resolved_data) {
+            const resolvedTask = await this.resolveConflict(localTask, result.resolved_data);
+            await this.taskService.updateTask(result.client_id, resolvedTask);
+            await this.updateSyncStatus(result.client_id, 'synced', { server_id: result.server_id });
+          }
+        } else {
+          // Handle sync error
+          await this.handleSyncError(originalItem, new Error(result.error || 'Unknown sync error'));
+        }
+      }
+
+      return response.data;
+    } catch (error) {
+      // Handle network/server errors for all items in batch
+      for (const item of items) {
+        await this.handleSyncError(item, error as Error);
+      }
+      throw error;
+    }
   }
 
   private async resolveConflict(localTask: Task, serverTask: Task): Promise<Task> {
-    // TODO: Implement last-write-wins conflict resolution
-    // 1. Compare updated_at timestamps
-    // 2. Return the more recent version
-    // 3. Log conflict resolution decision
-    throw new Error('Not implemented');
+    // Last-write-wins strategy: compare updated_at timestamps
+    if (localTask.updated_at > serverTask.updated_at) {
+      console.log(`Conflict resolved: Local task ${localTask.id} is more recent (${localTask.updated_at} > ${serverTask.updated_at})`);
+      return localTask;
+    } else {
+      console.log(`Conflict resolved: Server task ${serverTask.id} is more recent (${serverTask.updated_at} > ${localTask.updated_at})`);
+      return serverTask;
+    }
   }
 
   private async updateSyncStatus(taskId: string, status: 'synced' | 'error', serverData?: Partial<Task>): Promise<void> {
-    // TODO: Update task sync status
-    // 1. Update sync_status field
-    // 2. Update server_id if provided
-    // 3. Update last_synced_at timestamp
-    // 4. Remove from sync queue if successful
-    throw new Error('Not implemented');
+    const now = new Date();
+
+    // Update task sync status
+    let updateFields = 'sync_status = ?, last_synced_at = ?';
+    let params: any[] = [status, now.toISOString()];
+
+    if (serverData?.server_id) {
+      updateFields += ', server_id = ?';
+      params.push(serverData.server_id);
+    }
+
+    await this.db.run(
+      `UPDATE tasks SET ${updateFields} WHERE id = ?`,
+      [...params, taskId]
+    );
+
+    // Remove from sync queue if successful
+    if (status === 'synced') {
+      await this.db.run('DELETE FROM sync_queue WHERE task_id = ?', [taskId]);
+    }
   }
 
   private async handleSyncError(item: SyncQueueItem, error: Error): Promise<void> {
-    // TODO: Handle sync errors
-    // 1. Increment retry count
-    // 2. Store error message
-    // 3. If retry count exceeds limit, mark as permanent failure
-    throw new Error('Not implemented');
+    const maxRetries = parseInt(process.env.MAX_SYNC_RETRIES || '3');
+    const newRetryCount = item.retry_count + 1;
+
+    if (newRetryCount >= maxRetries) {
+      // Mark as permanent failure
+      console.error(`Sync failed permanently for task ${item.task_id}: ${error.message}`);
+      await this.updateSyncStatus(item.task_id, 'error');
+      await this.db.run(
+        'DELETE FROM sync_queue WHERE id = ?',
+        [item.id]
+      );
+    } else {
+      // Increment retry count and store error
+      await this.db.run(
+        'UPDATE sync_queue SET retry_count = ?, error_message = ? WHERE id = ?',
+        [newRetryCount, error.message, item.id]
+      );
+      console.warn(`Sync retry ${newRetryCount}/${maxRetries} for task ${item.task_id}: ${error.message}`);
+    }
   }
 
   async checkConnectivity(): Promise<boolean> {

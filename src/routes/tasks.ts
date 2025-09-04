@@ -33,30 +33,82 @@ export function createTaskRouter(db: Database): Router {
 
   // Create task
   router.post('/', async (req: Request, res: Response) => {
-    // TODO: Implement task creation endpoint
-    // 1. Validate request body
-    // 2. Call taskService.createTask()
-    // 3. Return created task
-    res.status(501).json({ error: 'Not implemented' });
+    try {
+      const { title, description } = req.body;
+
+      // Validate request body
+      if (!title || typeof title !== 'string' || title.trim().length === 0) {
+        return res.status(400).json({ error: 'Title is required and must be a non-empty string' });
+      }
+
+      if (description && typeof description !== 'string') {
+        return res.status(400).json({ error: 'Description must be a string if provided' });
+      }
+
+      const taskData = {
+        title: title.trim(),
+        description: description?.trim()
+      };
+
+      const task = await taskService.createTask(taskData);
+      res.status(201).json(task);
+    } catch (error) {
+      console.error('Error creating task:', error);
+      res.status(500).json({ error: 'Failed to create task' });
+    }
   });
 
   // Update task
   router.put('/:id', async (req: Request, res: Response) => {
-    // TODO: Implement task update endpoint
-    // 1. Validate request body
-    // 2. Call taskService.updateTask()
-    // 3. Handle not found case
-    // 4. Return updated task
-    res.status(501).json({ error: 'Not implemented' });
+    try {
+      const { id } = req.params;
+      const { title, description, completed } = req.body;
+
+      // Validate request body
+      if (title !== undefined && (typeof title !== 'string' || title.trim().length === 0)) {
+        return res.status(400).json({ error: 'Title must be a non-empty string if provided' });
+      }
+
+      if (description !== undefined && typeof description !== 'string') {
+        return res.status(400).json({ error: 'Description must be a string if provided' });
+      }
+
+      if (completed !== undefined && typeof completed !== 'boolean') {
+        return res.status(400).json({ error: 'Completed must be a boolean if provided' });
+      }
+
+      const updates: any = {};
+      if (title !== undefined) updates.title = title.trim();
+      if (description !== undefined) updates.description = description.trim();
+      if (completed !== undefined) updates.completed = completed;
+
+      const task = await taskService.updateTask(id, updates);
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      res.json(task);
+    } catch (error) {
+      console.error('Error updating task:', error);
+      res.status(500).json({ error: 'Failed to update task' });
+    }
   });
 
   // Delete task
   router.delete('/:id', async (req: Request, res: Response) => {
-    // TODO: Implement task deletion endpoint
-    // 1. Call taskService.deleteTask()
-    // 2. Handle not found case
-    // 3. Return success response
-    res.status(501).json({ error: 'Not implemented' });
+    try {
+      const { id } = req.params;
+
+      const deleted = await taskService.deleteTask(id);
+      if (!deleted) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      console.error('Error deleting task:', error);
+      res.status(500).json({ error: 'Failed to delete task' });
+    }
   });
 
   return router;

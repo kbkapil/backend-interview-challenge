@@ -1,15 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { TaskService } from '../services/taskService';
-import { SyncService } from '../services/syncService';
 import { Database } from '../db/database';
 
 export function createTaskRouter(db: Database): Router {
   const router = Router();
   const taskService = new TaskService(db);
-  const syncService = new SyncService(db, taskService);
 
   // Get all tasks
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', async (_req: Request, res: Response) => {
     try {
       const tasks = await taskService.getAllTasks();
       res.json(tasks);
@@ -19,11 +17,12 @@ export function createTaskRouter(db: Database): Router {
   });
 
   // Get single task
-  router.get('/:id', async (req: Request, res: Response) => {
+  router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     try {
       const task = await taskService.getTask(req.params.id);
       if (!task) {
-        return res.status(404).json({ error: 'Task not found' });
+        res.status(404).json({ error: 'Task not found' });
+        return;
       }
       res.json(task);
     } catch (error) {
@@ -32,17 +31,19 @@ export function createTaskRouter(db: Database): Router {
   });
 
   // Create task
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', async (req: Request, res: Response): Promise<void> => {
     try {
       const { title, description } = req.body;
 
       // Validate request body
       if (!title || typeof title !== 'string' || title.trim().length === 0) {
-        return res.status(400).json({ error: 'Title is required and must be a non-empty string' });
+        res.status(400).json({ error: 'Title is required and must be a non-empty string' });
+        return;
       }
 
       if (description && typeof description !== 'string') {
-        return res.status(400).json({ error: 'Description must be a string if provided' });
+        res.status(400).json({ error: 'Description must be a string if provided' });
+        return;
       }
 
       const taskData = {

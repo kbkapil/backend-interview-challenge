@@ -104,8 +104,8 @@ Implement a sync-enabled task management API with offline functionality, conflic
 ### 6. Documentation and Submission
 - [ ] Update README with implementation approach
 - [ ] Document assumptions made
-- [ ] Create new branch for submission
-- [ ] Push changes to branch
+- [x] Create new branch for submission
+- [x] Push changes to branch
 - [ ] Create pull request
 - [ ] Invite PearlThoughtsHR to repository
 

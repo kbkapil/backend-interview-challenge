@@ -9,7 +9,7 @@ export function createSyncRouter(db: Database): Router {
   const syncService = new SyncService(db, taskService);
 
   // Trigger manual sync
-  router.post('/sync', async (req: Request, res: Response) => {
+  router.post('/sync', async (_req: Request, res: Response) => {
     try {
       const syncResult = await syncService.sync();
       res.json(syncResult);
@@ -30,7 +30,7 @@ export function createSyncRouter(db: Database): Router {
   });
 
   // Check sync status
-  router.get('/status', async (req: Request, res: Response) => {
+  router.get('/status', async (_req: Request, res: Response) => {
     try {
       // Get pending sync count
       const pendingItems = await db.all(
@@ -62,7 +62,7 @@ export function createSyncRouter(db: Database): Router {
   // Batch sync endpoint (for server-side)
   router.post('/batch', async (req: Request, res: Response) => {
     try {
-      const { items, client_timestamp } = req.body;
+      const { items, client_timestamp: _client_timestamp } = req.body;
 
       if (!Array.isArray(items)) {
         return res.status(400).json({ error: 'Invalid items array' });
@@ -111,7 +111,7 @@ export function createSyncRouter(db: Database): Router {
   });
 
   // Health check endpoint
-  router.get('/health', async (req: Request, res: Response) => {
+  router.get('/health', async (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date() });
   });
 
